@@ -16,8 +16,8 @@ LIBS = -L$(MKLROOT)/lib/intel64/
 LD = $(FC) $(LIBS) -Wl,--no-as-needed -lmkl_gf_lp64 -lmkl_sequential -lmkl_core -lpthread -lm -ldl
 
 # List of all source files
-SRCS := Ultraspherical_Polynomials.F90
-TEST_SRCS := Test_Ultraspherical.F90
+SRCS := Ultraspherical_Polynomials_NoSparse.F90
+TEST_SRCS := Test_Ultraspherical_NoSparse.F90
 
 # Create lists of the build artefacts in this project
 OBJS := $(addsuffix .o, $(SRCS))
@@ -42,8 +42,8 @@ $(OBJS) $(TEST_OBJS): %.o: %
 	$(FC) -c -o $@ $<
 
 # Define all module interdependencies
-Ultraspherical_Polynomials.mod := Ultraspherical_Polynomials.F90.o
-Test_Ultraspherical.F90.o: $(Ultraspherical_Polynomials.mod)
+Ultraspherical_Polynomials_NoSparse.mod := Ultraspherical_Polynomials_NoSparse.F90.o
+Test_Ultraspherical_NoSparse.F90.o: $(Ultraspherical_Polynomials_NoSparse.mod)
 
 # Cleanup, filter to avoid removing source code by accident
 clean:
