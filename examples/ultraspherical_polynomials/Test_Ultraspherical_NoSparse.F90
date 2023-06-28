@@ -34,20 +34,42 @@ Contains
 
   Subroutine Test_Derivatives()
     Implicit None
-    Integer, Parameter :: N=64
-    Integer :: i, j, k, lambda, info, pivots(N)
-    Real*8 :: pi, x(N), ifx(N,1), fx(N,1), coefs(N,1), tcoefs(N,1), sol(N,1), exact(N,8)
+    Integer, Parameter :: N=512
+    Integer :: i, j, k, lambda, info, lwork_qr, pivots(N)
+    Real*8 :: pi, x(N), ifx(N,1), fx(N,1), coefs(N,1), tcoefs(N,1), sol(N,1), exact(N,8), exact_coef(N,8), Pre(N), tau_qr(N)
+    Real*8, Allocatable :: work_qr(:)
     Real*8, Dimension(N,N) :: Dl, C0, C1, C2, LU
 
     pi = 3.141592653589793238d0
     
-    Do i=0,N-1
-       x(i+1) = -cos(pi*(Dble(i)+0.5d0)/Dble(N))
+    Do i=1,N
+       x(i) = cos(pi*(Dble(i)-0.5d0)/Dble(N))
     End Do
 
+    !x^6
+    fx(:,1) = x**6
+
+    Print*, 'Testing Chevyshev Transform'
+    
+    Call Forward_Chebyshev_Transform(x,fx,coefs)
+    tcoefs = 0d0
+    tcoefs(1,1) = 5d0/16d0
+    tcoefs(3,1) = 15d0/32d0
+    tcoefs(5,1) = 3d0/16d0
+    tcoefs(7,1) = 1d0/32d0
+    Print*, 'Linf Forward error'
+    Print*, maxval(abs(coefs-tcoefs))
+    
+    Call Backward_Chebyshev_Transform(x,tcoefs,ifx)
+    Print*, 'Linf Backward error'
+    Print*, maxval(abs(fx(:,1)-ifx(:,1)))/maxval(abs(fx))
+    
+    Call Backward_Chebyshev_Transform(x,coefs,ifx)
+    Print*, 'Linf Forward-Backward error'
+    Print*, maxval(abs(fx(:,1)-ifx(:,1)))/maxval(abs(fx))
+    
     !T_8(x)
     fx(:,1) = 128d0*x**8 - 256d0*x**6 + 160d0*x**4 - 32d0*x**2 + 1d0
-
     exact(:,1) = 8d0*128d0*x**7 - 6d0*256d0*x**5 + 4d0*160d0*x**3 - 2d0*32d0*x
     exact(:,2) = 7d0*8d0*128d0*x**6 - 5d0*6d0*256d0*x**4 + 3d0*4d0*160d0*x**2 - 2d0*32d0
     exact(:,3) = 6d0*7d0*8d0*128d0*x**5 - 4d0*5d0*6d0*256d0*x**3 + 2d0*3d0*4d0*160d0*x
@@ -56,54 +78,132 @@ Contains
     exact(:,6) = 3d0*4d0*5d0*6d0*7d0*8d0*128d0*x**2 - 2d0*3d0*4d0*5d0*6d0*256d0
     exact(:,7) = 2d0*3d0*4d0*5d0*6d0*7d0*8d0*128d0*x
     exact(:,8) = 2d0*3d0*4d0*5d0*6d0*7d0*8d0*128d0
+
+    exact_coef = 0d0
+    exact_coef(2:8:2,1) = 16d0
+    exact_coef(1:7:2,2) = (/256d0,480d0,384d0,224d0/)
+    exact_coef(2:6:2,3) = (/7680d0,5760d0,2688d0/)
+    exact_coef(1:5:2,4) = (/38400d0,61440d0,26880d0/)
+    exact_coef(2:4:2,5) = (/460800d0,215040d0/)
+    exact_coef(1:3:2,6) = (/1105920d0,1290240d0/)
+    exact_coef(2,7) = 5160960d0
+    exact_coef(1,8) = 5160960d0
     
     Call Forward_Chebyshev_Transform(x,fx,coefs)
-    Print*, 'T_n Coefs for f'
-    Print*, coefs
-    tcoefs = 0d0
-    tcoefs(9,1) = 1d0
-    Print*, 'Linf Forward error'
-    Print*, maxval(abs(coefs-tcoefs))
-    
-    Call Backward_Chebyshev_Transform(x,tcoefs,ifx)
-    Print*, 'Linf Backward error'
-    Print*, maxval(abs(fx(:,1)-ifx(:,1)))/maxval(abs(fx))
 
-    Call Backward_Chebyshev_Transform(x,coefs,ifx)
-    Print*, 'Linf Forward-Backward error'
-    Print*, maxval(abs(fx(:,1)-ifx(:,1)))/maxval(abs(fx))
-    
+    Do lambda=1,8
+       Print*, 'Order'
+       Print*, lambda
+       ifx(:,1) = exact(:,lambda)
+       Call Forward_Chebyshev_Transform(x,ifx,tcoefs)
+       Print*, 'Linf Forward error'
+       Print*, maxval(abs(exact_coef(:,lambda)-tcoefs(:,1)))/maxval(abs(exact_coef(:,lambda)))
+       sol(:,1) = exact_coef(:,lambda)
+       Call Backward_Chebyshev_Transform(x,sol,ifx)
+       Print*, 'Linf Backward error'
+       Print*, maxval(abs(exact(:,lambda)-ifx(:,1)))/maxval(abs(exact(:,lambda)))
+    End Do
     Call Build_Conversion_Matrix(N,0,C0)
+
+    !Test conversion matrix
+    tcoefs = 0d0
+    Do i=1,N
+       tcoefs(:,1) = tcoefs(:,1) + C0(:,i)*coefs(i,1)
+    End Do
+    LU = C0
+    sol = tcoefs
+    Allocate(work_qr(N))
+    Call dgeqrf(N,N,LU,N,tau_qr,work_qr,-1,info)
+    lwork_qr = int(work_qr(1))
+    Deallocate(work_qr)
+    Allocate(work_qr(lwork_qr))
+    LU = C0
+    Call dgeqrf(N,N,LU,N,tau_qr,work_qr,lwork_qr,info)
+    Call dormqr('L','T',N,1,N,LU,N,tau_qr,sol,N,work_qr,lwork_qr,info)
+    Call dtrsm('L','U','N','N',N,1,1d0,LU,N,sol,N)
+    Call Backward_Chebyshev_Transform(x,sol,ifx)
+    Print*, 'lambda=1 Conversion Test T->U->T'
+    Print*, maxval(abs(fx-ifx))/maxval(abs(fx))
+    Deallocate(work_qr)
     
     Do lambda=1,8
        Call Build_Derivative_Matrix(N,lambda,Dl)
+
+       ! Preconditioner
+       Do i=1,N
+          Pre(i) = 1d0/Dble(i+lambda-1)
+       End Do
+       Pre = Pre/(2d0**(lambda-1)*gamma(Dble(lambda)))
+
+       !Do i=1,N
+       !   Pre(i) = 1d0 !/max(1d0,C0(i,i))
+       !End Do
+       !Pre = Pre/(2d0**(lambda-1)*gamma(Dble(lambda)))
+       
        tcoefs = 0d0
        Do i=1,N
-          Do j=1,N
-             tcoefs(i,1) = tcoefs(i,1) + Dl(i,j)*coefs(j,1)
-          End Do
+          tcoefs(:,1) = tcoefs(:,1) + Dl(:,i)*coefs(i,1)
        End Do
 
-       fx(:,1) = exact(:,lambda)
-       Call Forward_Chebyshev_Transform(x,fx,sol)
-       ! Convert to C^\lambda basis
-       ifx = 0d0
+       ! Solve for T_n coefs (invert conversion)
+       sol = 0d0
+       LU = 0d0
        Do i=1,N
-          Do j=1,N
-             ifx(i,1) = ifx(i,1) + C0(i,j)*sol(j,1)
-          End Do
+          sol(i,1) = Pre(i)*tcoefs(i,1)
+          LU(:,i) = Pre(:)*C0(:,i)
+       End Do
+       C1 = LU
+       Call dgetrf(N,N,LU,N,pivots,info)
+       C2 = 0d0
+       Do i=1,N
+          C2(i,i) = 1d0
        End Do
        Print*, 'Derivative order lambda'
        Print*, lambda
-       Print*, 'Linf coefficient error'
-       Print*, maxval(abs(ifx-tcoefs))/maxval(abs(ifx))
+       Call dgetrs('N',N,N,LU,N,pivots,C1,N,info)
+       Print*, 'Linf LU solve C0^(-1) C0 ~ I'
+       Print*, maxval(abs(C1-C2))
+       Call dgetrs('N',N,1,LU,N,pivots,sol,N,info)
+       Print*, 'Linf coefficient error using LU'
+       Print*, maxval(abs(exact_coef(:,lambda)-sol(:,1)))/maxval(abs(exact_coef(:,lambda)))
+       Call Backward_Chebyshev_Transform(x,sol,ifx)
+       Print*, 'Linf spatial error using LU'
+       Print*, maxval(abs(exact(:,lambda)-ifx(:,1)))/maxval(abs(exact(:,lambda)))
+       !Print*, 'Exact'
+       !Print*, exact(:,lambda)
+       !Print*, 'Numerical'
+       !Print*, ifx(:,1)
+       sol = 0d0
+       LU = 0d0
+       Do i=1,N
+          sol(i,1) = Pre(i)*tcoefs(i,1)
+          LU(:,i) = Pre(:)*C0(:,i)
+       End Do
+       Allocate(work_qr(N))
+       Call dgeqrf(N,N,LU,N,tau_qr,work_qr,-1,info)
+       lwork_qr = int(work_qr(1))
+       Deallocate(work_qr)
+       Allocate(work_qr(lwork_qr))
+       sol = 0d0
+       LU = 0d0
+       Do i=1,N
+          sol(i,1) = Pre(i)*tcoefs(i,1)
+          LU(:,i) = Pre(:)*C0(:,i)
+       End Do
+       Call dgeqrf(N,N,LU,N,tau_qr,work_qr,lwork_qr,info)
+       Call dormqr('L','T',N,1,N,LU,N,tau_qr,sol,N,work_qr,lwork_qr,info)
+       Call dtrsm('L','U','N','N',N,1,1d0,LU,N,sol,N)
+       Print*, 'Linf coefficient error using QR'
+       Print*, maxval(abs(exact_coef(:,lambda)-sol(:,1)))/maxval(abs(exact_coef(:,lambda)))
+       Call Backward_Chebyshev_Transform(x,sol,ifx)
+       Print*, 'Linf spatial error using QR'
+       Print*, maxval(abs(exact(:,lambda)-ifx(:,1)))/maxval(abs(exact(:,lambda)))
+       Deallocate(work_qr)
        Call Build_Conversion_Matrix(N,lambda,C1)
        C2 = 0
        Do j=1,N
-          Do i=1,N
-             Do k=1,N
-                C2(i,j) = C2(i,j) + C1(i,k)*C0(k,j)
-             End Do
+          Do k=1,N
+             C2(:,j) = C2(:,j) + C1(:,k)*C0(k,j)
           End Do
        End Do
        C0 = C2

@@ -39,8 +39,8 @@ Module Ultraspherical_Polynomials_NoSparse
 
   ! Alloctable arrays for the transforms, only allocated upon the first calls
   ! to the forward or backward transforms.
-  Integer, Allocatable :: pivots(:)
-  Real*8, Allocatable :: forward_transform_matrix(:,:)
+  Integer :: lwork_forward
+  Real*8, Allocatable :: forward_transform_matrix(:,:), tau_forward(:), work_forward(:)
   Real*8, Allocatable :: backward_transform_matrix(:,:)
   
 Contains
@@ -54,13 +54,19 @@ Contains
     Integer :: N, info
     If (.not. Allocated(forward_transform_matrix)) Then
        N = size(x)
-       Allocate(forward_transform_matrix(N,N),pivots(N))
+       Allocate(forward_transform_matrix(N,N),tau_forward(N),work_forward(N))
        Call Build_Backward_Transform(x)
        forward_transform_matrix = backward_transform_matrix
-       Call dgetrf(N,N,forward_transform_matrix,N,pivots,info)
+       ! Get optimal
+       Call dgeqrf(N,N,forward_transform_matrix,N,tau_forward,work_forward,-1,info)
+       lwork_forward = int(work_forward(1))
+       Deallocate(work_forward)
+       Allocate(work_forward(lwork_forward))
+       forward_transform_matrix = backward_transform_matrix
+       Call dgeqrf(N,N,forward_transform_matrix,N,tau_forward,work_forward,lwork_forward,info)
        ! Trap error
        If (info<0) Then
-          Print*, 'Illegal argument to dgetrf at ', info
+          Print*, 'Illegal argument to dgeqrf at ', info
           Print*, 'Check input grid values.'
        Else If(info>0) Then
           Print*, 'Factorization for forward Chebyshev transform is singular due to element at ', info
@@ -68,7 +74,6 @@ Contains
        End If
     End If
   End Subroutine Build_Forward_Transform
-
 
   ! Building a transform matrix allows for arbitrary grids at the expense
   ! of more multiplication operators compared to the DCT.
@@ -78,7 +83,7 @@ Contains
     Implicit None
     Real*8, Intent(In) :: x(:) ! The grid points.
     Real*8, Allocatable :: tmp(:), grid(:)
-    Real*8 :: x0, x1
+    Real*8 :: x0, x1, pi
     Integer :: N, i, j
     ! On first entry allocate and define the matrix.
     If (.not. Allocated(backward_transform_matrix)) Then
@@ -86,14 +91,12 @@ Contains
        Allocate(backward_transform_matrix(N,N),tmp(N),grid(N))
 
        ! Ensure the grid is from -1 to 1, internally.
-       x0 = minval(x)
-       x1 = maxval(x)
-       grid = 2d0*(x-x0)/(x1-x0)-1d0
-       
-       backward_transform_matrix(:,1) = 0.5d0
-       Do j=2,N
-          tmp = Dble(j-1)*acos(grid)
-          backward_transform_matrix(:,j) = cos(tmp)
+       pi = 3.141592653589793238d0
+       Do j=1,N
+          Do i=1,N
+             x0 = pi*Dble(j-1)*(Dble(i)-0.5d0)/Dble(N)
+             backward_transform_matrix(i,j) = cos(x0)
+          End Do
        End Do
     End If
   End Subroutine Build_Backward_Transform
@@ -103,7 +106,7 @@ Contains
     Implicit None
     Real*8, Intent(In) :: x(:), f(:,:)
     Real*8, Intent(InOut) :: cf(:,:)
-    Integer :: N ,K, info
+    Integer :: i, N ,K, info
 
     If (.not. Allocated(forward_transform_matrix)) Then
        Call Build_Forward_Transform(x)
@@ -112,11 +115,15 @@ Contains
     cf = f
     N = size(x)
     K = size(f)/N ! Assumes cf and f are the same size
-    Call dgetrs('N',N,K,forward_transform_matrix,N,pivots,cf,N,info)
+    ! Compute Q^T CF
+    Call dormqr('L','T',N,K,N,forward_transform_matrix,N,tau_forward,cf,N,work_forward,lwork_forward,info)
+    Call dtrsm('L','U','N','N',N,K,1d0,forward_transform_matrix,N,cf,N)
     ! Trap error
     if (info<0) Then
-       Print*, 'Illegal value to detrs in forward chevyshev transform at ', info
+       Print*, 'Illegal value to dgeqrs in forward chevyshev transform at ', info
     End if
+
+    !cf(1,:) = 0.5d0*cf(1,:)
   End Subroutine Forward_Chebyshev_Transform
 
   ! Perform the backward transform, using Lapack via dgemm.
@@ -254,8 +261,8 @@ Contains
     
     matrix = 0
 
-    Do i=0,N-lambda-1
-       matrix(i+1,i+lambda+1) = Dble(i + lambda)
+    Do i=1,N-lambda
+       matrix(i,i+lambda) = Dble(i + lambda-1)
     End Do
 
     matrix = Dble(2)**(lambda-1)*gamma(Dble(lambda))*matrix
@@ -273,17 +280,17 @@ Contains
     matrix = 0
     If (lambda.eq.0) Then
        ! Diagonal
-       matrix(1,1) = 1 
+       matrix(1,1) = 1d0
        Do i=2, N
-          matrix(i,i) = 0.5
+          matrix(i,i) = 0.5d0
        End Do
        ! Super-diagonal
        Do i=1, N-2
-          matrix(i,i+2) = -0.5
+          matrix(i,i+2) = -0.5d0
        End Do
     Else
        ! Diagonal
-       matrix(1,1) = 1 
+       matrix(1,1) = 1d0 
        Do i=2, N
           matrix(i,i) = Dble(lambda)/Dble(lambda+i-1)
        End Do
